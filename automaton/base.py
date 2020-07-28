@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import collections
 import multiprocessing
 import warnings
+import yaml
 import os
 import copy
 import queue
@@ -365,6 +366,31 @@ class Automaton(nx.MultiDiGraph, metaclass=ABCMeta):
                                                    is_pos_example=True))
 
         return os.path.abspath(filepath)
+
+    def to_yaml_file(self, file_name: str):
+        """
+        Dumps the configuration data into a yaml given a valid address and file name.
+
+        : param         file_name              The directory along with the
+                                               file name to dump the yaml file
+        """
+        graph_dict = dict(
+                alphabet_size=self._alphabet_size,
+                num_states=self._num_states,
+                num_obs=self._num_obs,
+                start_state=self.start_state,
+                nodes=[node for node in self.nodes.data()],
+                edges=[edge for edge in self.edges.data()]
+        )
+
+        try:
+            with open(file_name, 'w') as outfile:
+                yaml.dump(graph_dict, outfile, default_flow_style=False)
+
+        except FileNotFoundError:
+            print(FileNotFoundError)
+            print(f"The file {file_name} could not be found."
+                  f" This could be because I could not find the folder to dump in")
 
     def generate_traces(self, num_samples: int, N: int,
                         max_resamples: int = 10,

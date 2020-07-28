@@ -99,6 +99,20 @@ class ModifyActionsWrapper(gym.core.Wrapper):
                                 SimpleStaticActions.east: 0,
                                 SimpleStaticActions.west: 2}
 
+    class SimpleRandStaticActions(IntEnum):
+        # move in this direction on the grid
+        north = 0
+        south = 1
+        east = 2
+        west = 3
+        rand = 4
+
+    RAND_SIMPLE_ACTION_TO_DIR_IDX = {SimpleRandStaticActions.north: 3,
+                                     SimpleRandStaticActions.south: 1,
+                                     SimpleRandStaticActions.east: 0,
+                                     SimpleRandStaticActions.west: 2,
+                                     SimpleRandStaticActions.rand: 6}
+
     # Enumeration of possible actions
     # as this is a static environment, we will only allow for movement actions
     # For a simple environment, we only allow the agent to move:
@@ -130,7 +144,8 @@ class ModifyActionsWrapper(gym.core.Wrapper):
         super().__init__(env)
 
         self._allowed_actions_types = set(['static', 'simple_static',
-                                           'diag_static', 'default'])
+                                           'diag_static', 'default',
+                                           'rand_simple_static'])
         if actions_type not in self._allowed_actions_types:
             msg = f'actions_type ({actions_type}) must be one of: ' + \
                   f'{actions_type}'
@@ -150,6 +165,9 @@ class ModifyActionsWrapper(gym.core.Wrapper):
         elif actions_type == 'diag_static':
             actions = ModifyActionsWrapper.DiagStaticActions
             step_function = self._step_diag_static
+        elif actions_type == 'rand_simple_static':
+            actions = ModifyActionsWrapper.SimpleRandStaticActions
+            step_function = self._step_rand_static
         elif actions_type == 'default':
             actions = MiniGridEnv.Actions
             step_function = self._step_default
@@ -169,6 +187,9 @@ class ModifyActionsWrapper(gym.core.Wrapper):
 
     def step(self, action: IntEnum) -> StepData:
 
+        if isinstance(action, tuple):
+            obs, reward, done, _ = self.step_rand(action)
+            return obs, reward, done, {}
         # all of these changes must affect the base environment to be seen
         # across all other wrappers
         base_env = self.unwrapped
@@ -183,6 +204,61 @@ class ModifyActionsWrapper(gym.core.Wrapper):
         obs = base_env.gen_obs()
 
         return obs, reward, done, {}
+
+    def step_rand(self, action: tuple) -> StepData:
+
+        # all of these changes must affect the base environment to be seen
+        # across all other wrappers
+        base_env = self.unwrapped
+
+        base_env.step_count += 1
+
+        done, reward = self._step_rand_static(action)
+
+        if base_env.step_count >= base_env.max_steps:
+            done = True
+
+        obs = base_env.gen_obs()
+
+        return obs, reward, done, {}
+
+    def _step_rand_static(self, action: tuple) -> Tuple[Done, Reward]:
+        reward = 0
+        done = False
+
+        # all of these changes must affect the base environment to be seen
+        # across all other wrappers
+        base_env = self.unwrapped
+
+        start_pos = base_env.agent_pos
+
+        # save the original direction so we can reset it after moving
+        # old_dir = base_env.agent_dir
+        # new_dir = ModifyActionsWrapper.SIMPLE_ACTION_TO_DIR_IDX[action]
+        # base_env.agent_dir = new_dir
+
+        # Get the contents of the cell in front of the agent
+        # fwd_pos = base_env.front_pos
+        # fwd_cell = base_env.grid.get(*fwd_pos)
+
+        # a diagonal action is really just two simple actions :)
+        # pos_delta = ModifyActionsWrapper.RAND_SIMPLE_ACTION_TO_DIR_IDX[action]
+        # pos_delta = ModifyActionsWrapper.DIAG_ACTION_TO_POS_DELTA[action]
+
+        # Get the contents of the new cell of the agent
+        # new_pos = tuple(np.add(start_pos, pos_delta))
+        new_pos = action
+        new_cell = base_env.grid.get(*new_pos)
+
+        if new_cell is None or new_cell.can_overlap():
+            base_env.agent_pos = new_pos
+        if new_cell is not None and new_cell.type == 'goal':
+            done = True
+            reward = base_env._reward()
+        if new_cell is not None and new_cell.type == 'lava':
+            done = True
+
+        return done, reward
 
     def _step_diag_static(self, action: IntEnum) -> Tuple[Done, Reward]:
 
@@ -373,13 +449,14 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
         self._mode = None
 
         self._allowed_actions_types = set(['static', 'simple_static',
-                                           'diag_static', 'default'])
+                                           'diag_static', 'default',
+                                           'rand_simple_static'])
         if actions_type not in self._allowed_actions_types:
             msg = f'actions_type ({actions_type}) must be one of: ' + \
                   f'{self._allowed_actions_types}'
             raise ValueError(msg)
 
-        if actions_type == 'simple_static' or actions_type == 'diag_static':
+        if actions_type == 'simple_static' or actions_type == 'diag_static' or actions_type == 'rand_simple_static':
             env.directionless_agent = True
         elif actions_type == 'static' or actions_type == 'default':
             env.directionless_agent = False
@@ -481,6 +558,23 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
 
         return self.state_only_obs(obs), reward, done, {}
 
+    def state_only_obs_step_rand(self, action: tuple) -> StepData:
+        """
+        step()s the environment, but returns only the grid observation
+
+        This command only works for a MiniGridEnv obj, as their obs:
+            obs, reward, done, _ = MiniGridEnbv.step()
+        is a dict containing the (full/partially) observable grid observation
+
+        :param      action:  The action to take
+
+        :returns:   Normal step() return data, but with obs being only the grid
+        """
+
+        obs, reward, done, _ = self.env.step_rand(action)
+
+        return self.state_only_obs(obs), reward, done, {}
+
     def _get_agent_props(self) -> Tuple[AgentPos, AgentDir]:
         """
         Gets the agent's position and direction in the base environment
@@ -573,6 +667,26 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
 
         self._set_agent_props(pos, direction)
         _, _, done, _ = self.state_only_obs_step(action)
+
+        return (*self._get_agent_props(), done)
+
+    def _make_transition_rand(self, action: AgentPos,
+                         pos: AgentPos,
+                         direction: AgentDir) -> Tuple[AgentPos,
+                                                       AgentDir,
+                                                       Done]:
+        """
+        Makes a state transition in the environment, assuming the env has state
+
+        :param      action:     The action to take
+        :param      pos:        The agent's position
+        :param      direction:  The agent's direction
+
+        :returns:   the agent's new state, whether or not step() emitted done
+        """
+
+        self._set_agent_props(pos, direction)
+        _, _, done, _ = self.state_only_obs_step_rand(action)
 
         return (*self._get_agent_props(), done)
 
@@ -1477,6 +1591,60 @@ class MyDistShift(MiniGridEnv):
         self.mission = "get to both the green and purple squares"
 
 
+class RegretLavaEnv(MiniGridEnv):
+    """
+    Lava env for regret minimizing strategy computation.
+    """
+
+    def __init__(self,
+                 width=7,
+                 height=7,
+                 agent_start_pos=(1, 1),
+                 agent_start_dir=0,
+                 obstacle_type=Lava):
+
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.goal_pos = (width-2, height-2)
+        self.obstacle_type = obstacle_type
+
+        self.directionless_agent = False
+
+        super().__init__(width=width,
+                         height=height,
+                         max_steps=4*width*height,
+                         see_through_walls=True)
+
+    def _gen_grid(self, width, height):
+        assert width >= 5 and height >= 5
+
+        # create an empty grid
+        if self.directionless_agent:
+            self.grid = NoDirectionAgentGrid(width, height)
+        else:
+            self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+
+        # put the goal object
+        self.put_obj(Goal(), *self.goal_pos)
+
+        # put the lava floors
+        self.grid.set(width-2, height - 3, Lava())
+        self.grid.set(width-3, height - 2, Lava())
+        self.grid.set(width-3, height - 3, Lava())
+
+        # place the agent
+        if self.agent_start_pos is not None:
+            self.agent_pos = self.agent_start_pos
+            self.agent_dir = self.agent_start_dir
+        else:
+            self.place_agent()
+
+        self.mission = "get to the green state while avoiding lava states"
+
+
 class WorldObj:
     """
     Base class for grid world objects
@@ -1597,6 +1765,11 @@ class Water(WorldObj):
         fill_coords(img, point_in_rect(0.031, 1, 0.031, 1), color)
 
 
+class RegretLavaEnvNoEntry(RegretLavaEnv):
+    def __init__(self):
+        super().__init__()
+
+
 class LavaComparison_noDryingOff(LavaComparison):
     def __init__(self):
         super().__init__(drying_off_task=False)
@@ -1671,3 +1844,7 @@ register(
     id='MiniGrid-MyDistShift-v0',
     entry_point='wombats.systems.minigrid:MyDistShift'
 )
+
+register(
+    id='MiniGrid-Lava_NoEntry-v0',
+    entry_point='wombats.systems.minigrid:RegretLavaEnvNoEntry')

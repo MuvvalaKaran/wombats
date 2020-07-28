@@ -246,6 +246,16 @@ class MinigridTransitionSystem(TransitionSystem):
 
         return obs, reward, done, _
 
+    def step_rand(self, action: tuple) -> StepData:
+
+        obs, reward, done, _ = self.env.state_only_obs_step_rand(action)
+
+        # update states
+        self.agent_state = self.env._get_agent_props()
+        self.current_state = self.env._get_state_str(*self.agent_state)
+
+        return obs, reward, done, _
+
     def transition(self, curr_state: Node,
                    input_symbol: {Symbol, EnvAct},
                    **get_next_state_kwargs: dict) -> TS_Trans_Data:
@@ -374,6 +384,82 @@ class MinigridTransitionSystem(TransitionSystem):
         next_state_label_in_TS = self._transition_map[(curr_state, symbol)]
         if next_state_label != next_state_label_in_TS:
             msg = f'At the current_state ({curr_state}) under given symbol ' +\
+                  f'({symbol}, the internal Minigrid env''s env.step() ' + \
+                  f'returned a next state ({next_state_label}) that was ' + \
+                  f'different than the next state ' + \
+                  f'({next_state_label_in_TS}) in the transition system.'
+            raise ValueError(msg)
+
+        if show_steps:
+            self.env.render_notebook()
+
+        return next_state_label, symbol_probability
+
+    def _get_next_state_rand(self, curr_state: Node,
+                        symbol: {Symbol, EnvAct},
+                        show_steps: bool = False) -> Tuple[Node, None]:
+        """
+        Gets the next state given the current state and the "input" symbol.
+
+        computes this using the underlying environment's step() function.
+        Note: Accepts both a TS symbol or one of self.actions.
+
+        :param      curr_state:  The current state
+        :param      symbol:      The input symbol
+        :param      show_steps:  turn on / off displaying pictures of the
+                                 environment after getting the symbol
+
+        :returns:   (The next state label, the transition probability)
+
+        :raises     ValueError:  if you try to take an action when curr_state
+                                  is 'done'
+        :raises     ValueError:  symbol not in curr_state's transition function
+        :raises     ValueError:  duplicate symbol in curr_state's transition
+                                 function
+        :raises     ValueError:  if the Minigrid env and TS do not have the
+                                 same next state
+        """
+
+        if self.env.env.stats_recorder.done:
+            msg = f'curr_state ({curr_state}) is done. ' + \
+                  f'Cannot take any more actions.'
+            raise ValueError(msg)
+
+        if isinstance(symbol, self.actions):
+            symbol = self.env.ACTION_ENUM_TO_STR[symbol]
+
+        # (possible_symbols, _) = self._get_trans_probabilities(curr_state)
+
+        # if symbol not in possible_symbols:
+        #     msg = ('given symbol ({}) is not found in the '
+        #            'curr_state\'s ({}) '
+        #            'transition distribution').format(symbol, curr_state)
+        #     raise ValueError(msg)
+
+        # symbol_idx = [i for i, val in enumerate(possible_symbols)
+        #               if val == symbol]
+        # num_matched_symbols = len(symbol_idx)
+        # if num_matched_symbols != 1:
+        #     msg = ('given symbol ({}) is found multiple times in '
+        #            'curr_state\'s ({}) '
+        #            'transition distribution').format(symbol, curr_state)
+        #     raise ValueError(msg)
+
+        # symbol_probability = None
+
+        curr_state_env = self.env._get_state_from_str(curr_state)
+        action = self.env.ACTION_STR_TO_ENUM[symbol]
+        next_pos, next_dir, done = self.env._make_transition(action,
+                                                             *curr_state_env)
+        next_state_label = self.env._get_state_str(next_pos, next_dir)
+        self.current_state = next_state_label
+        self.agent_state = self.env._get_state_from_str(next_state_label)
+
+        # need to make sure that the environment and the internal, TS
+        # transition map are in sync
+        next_state_label_in_TS = self._transition_map[(curr_state, symbol)]
+        if next_state_label != next_state_label_in_TS:
+            msg = f'At the current_state ({curr_state}) under given symbol ' + \
                   f'({symbol}, the internal Minigrid env''s env.step() ' + \
                   f'returned a next state ({next_state_label}) that was ' + \
                   f'different than the next state ' + \
