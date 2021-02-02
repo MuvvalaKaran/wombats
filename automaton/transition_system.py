@@ -92,8 +92,12 @@ class TransitionSystem(Automaton):
         :returns:   the next TS state, and the obs
         """
 
-        next_state, _ = self._get_next_state(curr_state, input_symbol,
-                                             **get_next_state_kwargs)
+        if isinstance(input_symbol, tuple):
+            next_state, _ = self._get_next_state_rand(curr_state, input_symbol,
+                                                      **get_next_state_kwargs)
+        else:
+            next_state, _ = self._get_next_state(curr_state, input_symbol,
+                                                 **get_next_state_kwargs)
         observation = self.observe(next_state)
 
         return next_state, observation
@@ -301,8 +305,12 @@ class MinigridTransitionSystem(TransitionSystem):
         self.reset(new_monitor_file=overwrite_old_video)
 
         if show_steps:
-            self.env.render_notebook()
-
+            if isinstance(word, tuple) and len(word) == 2:
+                self.reg_val = word[0]
+                word = word[1]
+                self.env.render_notebook(reg_value=self.reg_val)
+            else:
+                self.env.render_notebook()
         # need to do type-checking / polymorphism handling here
         if isinstance(word, str) or not isinstance(word, collections.Iterable):
             word = [word]
@@ -399,7 +407,7 @@ class MinigridTransitionSystem(TransitionSystem):
                         symbol: {Symbol, EnvAct},
                         show_steps: bool = False) -> Tuple[Node, None]:
         """
-        Gets the next state given the current state and the "input" symbol.
+        Gets the next state given the current state and the "rand" input symbol.
 
         computes this using the underlying environment's step() function.
         Note: Accepts both a TS symbol or one of self.actions.
@@ -425,8 +433,8 @@ class MinigridTransitionSystem(TransitionSystem):
                   f'Cannot take any more actions.'
             raise ValueError(msg)
 
-        if isinstance(symbol, self.actions):
-            symbol = self.env.ACTION_ENUM_TO_STR[symbol]
+        # if isinstance(symbol, self.actions):
+        #     symbol = self.env.ACTION_ENUM_TO_STR[symbol]
 
         # (possible_symbols, _) = self._get_trans_probabilities(curr_state)
 
@@ -448,28 +456,33 @@ class MinigridTransitionSystem(TransitionSystem):
         # symbol_probability = None
 
         curr_state_env = self.env._get_state_from_str(curr_state)
-        action = self.env.ACTION_STR_TO_ENUM[symbol]
-        next_pos, next_dir, done = self.env._make_transition(action,
-                                                             *curr_state_env)
+        # action = self.env.ACTION_STR_TO_ENUM[symbol]
+        action = symbol[1]
+        _human_interventions = symbol[2]
+        next_pos, next_dir, done = self.env._make_transition_rand(action,
+                                                                  *curr_state_env)
         next_state_label = self.env._get_state_str(next_pos, next_dir)
         self.current_state = next_state_label
         self.agent_state = self.env._get_state_from_str(next_state_label)
 
         # need to make sure that the environment and the internal, TS
         # transition map are in sync
-        next_state_label_in_TS = self._transition_map[(curr_state, symbol)]
-        if next_state_label != next_state_label_in_TS:
-            msg = f'At the current_state ({curr_state}) under given symbol ' + \
-                  f'({symbol}, the internal Minigrid env''s env.step() ' + \
-                  f'returned a next state ({next_state_label}) that was ' + \
-                  f'different than the next state ' + \
-                  f'({next_state_label_in_TS}) in the transition system.'
-            raise ValueError(msg)
+        # next_state_label_in_TS = self._transition_map[(curr_state, symbol)]
+        # if next_state_label != next_state_label_in_TS:
+        #     msg = f'At the current_state ({curr_state}) under given symbol ' + \
+        #           f'({symbol}, the internal Minigrid env''s env.step() ' + \
+        #           f'returned a next state ({next_state_label}) that was ' + \
+        #           f'different than the next state ' + \
+        #           f'({next_state_label_in_TS}) in the transition system.'
+        #     raise ValueError(msg)
 
         if show_steps:
-            self.env.render_notebook()
+            try:
+                self.env.render_notebook(num_of_interventions=_human_interventions, reg_value=self.reg_val)
+            except AttributeError:
+                self.env.render_notebook(num_of_interventions=_human_interventions)
 
-        return next_state_label, symbol_probability
+        return next_state_label, None
 
 
 class TSBuilder(Builder):

@@ -20,6 +20,7 @@ from typing import Type, List, Tuple
 from gym import wrappers
 from gym.wrappers.monitor import disable_videos
 from enum import IntEnum
+import time
 
 # define these type defs for method annotation type hints
 EnvObs = np.ndarray
@@ -187,7 +188,7 @@ class ModifyActionsWrapper(gym.core.Wrapper):
 
     def step(self, action: IntEnum) -> StepData:
 
-        if isinstance(action, tuple):
+        if not isinstance(action, IntEnum):
             obs, reward, done, _ = self.step_rand(action)
             return obs, reward, done, {}
         # all of these changes must affect the base environment to be seen
@@ -230,31 +231,14 @@ class ModifyActionsWrapper(gym.core.Wrapper):
         # across all other wrappers
         base_env = self.unwrapped
 
-        start_pos = base_env.agent_pos
-
-        # save the original direction so we can reset it after moving
-        # old_dir = base_env.agent_dir
-        # new_dir = ModifyActionsWrapper.SIMPLE_ACTION_TO_DIR_IDX[action]
-        # base_env.agent_dir = new_dir
-
-        # Get the contents of the cell in front of the agent
-        # fwd_pos = base_env.front_pos
-        # fwd_cell = base_env.grid.get(*fwd_pos)
-
-        # a diagonal action is really just two simple actions :)
-        # pos_delta = ModifyActionsWrapper.RAND_SIMPLE_ACTION_TO_DIR_IDX[action]
-        # pos_delta = ModifyActionsWrapper.DIAG_ACTION_TO_POS_DELTA[action]
-
-        # Get the contents of the new cell of the agent
-        # new_pos = tuple(np.add(start_pos, pos_delta))
         new_pos = action
         new_cell = base_env.grid.get(*new_pos)
 
         if new_cell is None or new_cell.can_overlap():
             base_env.agent_pos = new_pos
-        if new_cell is not None and new_cell.type == 'goal':
-            done = True
-            reward = base_env._reward()
+        # if new_cell is not None and new_cell.type == 'water':
+        #     done = True
+        #     reward = base_env._reward()
         if new_cell is not None and new_cell.type == 'lava':
             done = True
 
@@ -486,15 +470,22 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
 
         self.reset()
 
-    def render_notebook(self) -> None:
+    def render_notebook(self, num_of_interventions: int = 0, reg_value=None) -> None:
         """
         Wrapper for the env.render() that works in notebooks
         """
-
+        if reg_value is None:
+            counter = plt.text(0.7, 0.7, f"Human Interventions: {num_of_interventions}", fontsize=14)
+        else:
+            counter = plt.text(0.7, 0.7, f"Reg Value:{reg_value}; Human Interventions: {num_of_interventions}",
+                               fontsize=12)
         plt.imshow(self.env.render(mode='rgb_image', tile_size=64),
                    interpolation='bilinear')
         plt.axis('off')
         plt.show()
+        plt.pause(0.5)
+        counter.remove()
+
 
     def reset(self, new_monitor_file: bool = False, **kwargs) -> np.ndarray:
         """
@@ -571,7 +562,7 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
         :returns:   Normal step() return data, but with obs being only the grid
         """
 
-        obs, reward, done, _ = self.env.step_rand(action)
+        obs, reward, done, _ = self.env.step(action)
 
         return self.state_only_obs(obs), reward, done, {}
 
@@ -1605,7 +1596,7 @@ class RegretLavaEnv(MiniGridEnv):
 
         self.agent_start_pos = agent_start_pos
         self.agent_start_dir = agent_start_dir
-        self.goal_pos = (width-2, height-2)
+        self.goal_pos = (width-2, 1)
         self.obstacle_type = obstacle_type
 
         self.directionless_agent = False
@@ -1628,12 +1619,17 @@ class RegretLavaEnv(MiniGridEnv):
         self.grid.wall_rect(0, 0, width, height)
 
         # put the goal object
-        self.put_obj(Goal(), *self.goal_pos)
+        # self.put_obj(Goal(), *self.goal_pos)
+        self.put_obj(Water(), *self.goal_pos)
 
         # put the lava floors
-        self.grid.set(width-2, height - 3, Lava())
-        self.grid.set(width-3, height - 2, Lava())
-        self.grid.set(width-3, height - 3, Lava())
+        # self.grid.set(width-2, height - 3, Water())
+        # self.grid.set(width-3, height - 2, Lava())
+        # self.grid.set(width-3, height - 3, Lava())
+        self.grid.set(width - 4, 1, Lava())
+        # self.grid.set(width - 5, 1, Lava())
+        # self.grid.set(width - 6, 1, Lava())
+
 
         # place the agent
         if self.agent_start_pos is not None:
@@ -1643,6 +1639,134 @@ class RegretLavaEnv(MiniGridEnv):
             self.place_agent()
 
         self.mission = "get to the green state while avoiding lava states"
+
+
+class RegretLavaSmallEnv(MiniGridEnv):
+    """
+    Lava env for regret minimizing strategy computation.
+    """
+
+    def __init__(self,
+                 width=7,
+                 height=7,
+                 agent_start_pos=(1, 1),
+                 agent_start_dir=0,
+                 obstacle_type=Lava):
+
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.goal_pos = (width-2, height-2)
+        self.obstacle_type = obstacle_type
+
+        self.directionless_agent = True
+
+        super().__init__(width=width,
+                         height=height,
+                         max_steps=4*width*height,
+                         see_through_walls=True)
+
+    def _gen_grid(self, width, height):
+        assert width >= 5 and height >= 5
+
+        # create an empty grid
+        if self.directionless_agent:
+            self.grid = NoDirectionAgentGrid(width, height)
+        else:
+            self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+
+        # put the goal object
+        # self.put_obj(Goal(), *self.goal_pos)
+        self.put_obj(Carpet(), 3, height-2)
+        # put lava around carpet to block the entry
+        # self.put_obj(Lava(), 2, height-2)
+        self.put_obj(Lava(), 3, height - 3)
+
+        self.grid.set(width - 2, height - 3, Water())
+
+        # put the lava floors
+        self.grid.set(3, 3, Lava())
+        # self.grid.set(4, 3, Lava())
+        self.grid.set(4, 4, Lava())
+        self.grid.set(5, 5, Lava())
+        self.grid.set(6, 6, Lava())
+
+        self.grid.set(4, 1, Lava())
+        self.grid.set(5, 2, Lava())
+        self.grid.set(6, 3, Lava())
+
+        self.grid.set(1, height - 2, Lava())
+        self.grid.set(width - 3, 1, Lava())
+        # self.grid.set(width - 5, height - 4, Lava())
+
+        # place the agent
+        if self.agent_start_pos is not None:
+            self.agent_pos = self.agent_start_pos
+            self.agent_dir = self.agent_start_dir
+        else:
+            self.place_agent()
+
+        self.mission = "get to the green state and blue state while avoiding lava states"
+
+
+class RegretLavaMultipleGoalsSmallEnv(MiniGridEnv):
+    """
+    Lava env for regret minimizing strategy computation.
+    """
+
+    def __init__(self,
+                 width=7,
+                 height=7,
+                 agent_start_pos=(3, 1),
+                 agent_start_dir=0,
+                 obstacle_type=Lava):
+
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.goal_pos = (width-2, height-2)
+        self.obstacle_type = obstacle_type
+
+        self.directionless_agent = True
+
+        super().__init__(width=width,
+                         height=height,
+                         max_steps=4*width*height,
+                         see_through_walls=True)
+
+    def _gen_grid(self, width, height):
+        assert width >= 5 and height >= 5
+
+        # create an empty grid
+        if self.directionless_agent:
+            self.grid = NoDirectionAgentGrid(width, height)
+        else:
+            self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+
+        # put the goal object
+        # self.put_obj(Goal(), *self.goal_pos)
+        # self.put_obj(Carpet(), 1, height-2)
+        # put lava around carpet to block the entry
+        # self.put_obj(Lava(), 2, height-2)
+        self.put_obj(Lava(), 1, height - 3)
+
+        self.grid.set(1, 1, Water())
+
+        # put the lava floors
+        # self.grid.set(3, 3, Lava())
+
+        # place the agent
+        if self.agent_start_pos is not None:
+            self.agent_pos = self.agent_start_pos
+            self.agent_dir = self.agent_start_dir
+        else:
+            self.place_agent()
+
+        self.mission = "get to the carpet and the water state while avoiding lava states"
 
 
 class WorldObj:
@@ -1767,7 +1891,17 @@ class Water(WorldObj):
 
 class RegretLavaEnvNoEntry(RegretLavaEnv):
     def __init__(self):
-        super().__init__()
+        super().__init__(width=7, height=5)
+
+
+class RegretSingleLavaSmallEnv(RegretLavaSmallEnv):
+    def __init__(self):
+        super().__init__(width=8, height=8)
+
+
+class RegretMultipleGoalLavaSmallEnv(RegretLavaMultipleGoalsSmallEnv):
+    def __init__(self):
+        super().__init__(width=5, height=5)
 
 
 class LavaComparison_noDryingOff(LavaComparison):
@@ -1848,3 +1982,11 @@ register(
 register(
     id='MiniGrid-Lava_NoEntry-v0',
     entry_point='wombats.systems.minigrid:RegretLavaEnvNoEntry')
+
+register(
+    id='MiniGrid-Lava_SmallEntry-v0',
+    entry_point='wombats.systems.minigrid:RegretSingleLavaSmallEnv')
+
+register(
+    id='MiniGrid-Lava_Multiple_Goals_SmallEntry-v0',
+    entry_point='wombats.systems.minigrid:RegretMultipleGoalLavaSmallEnv')
